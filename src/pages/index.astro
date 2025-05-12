@@ -1,0 +1,17 @@
+---
+import Layout from "../layouts/Layout.astro";
+const user = Astro.locals.user;
+// const jobId = Astro.locals.jobId
+import { processLocalFiles } from "../modules/processLocalFiles.mjs";
+import { createJobForLocalProcessing } from "../lib/job_db.js";
+const localMemeDirectory = import.meta.env.LOCAL_MEME_DIRECTORY 
+console.log(localMemeDirectory)
+let jobId
+if (localMemeDirectory) {
+	console.log("starting local processing of files")
+	jobId = createJobForLocalProcessing();
+	console.log("job ID for processing local files: ", jobId)
+	processLocalFiles(jobId, localMemeDirectory).catch(console.error);
+}
+---
+<Layout title="Welcome to Astro." />

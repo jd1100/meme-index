@@ -1,0 +1,187 @@
+---
+export const partial = true;
+import { processFile } from "../../modules/processFiles.mjs";
+import { uploadJobToDB, updateJobCurrentUploadedMemeCount, checkIfAJobIsRunning, checkIfAJobIsCanceled } from "../../lib/job_db.js";
+import { v4 as uuidv4 } from "uuid";
+import pLimit from "p-limit";
+import * as jwt_decode from "jwt-decode";
+import LoadingIcon from "../../components/LoadingIcon.astro";
+
+const htmxTrigger = "every 10s";
+
+const limit = pLimit(10);
+
+// ---------------------------------------------------
+let errorMessage;
+let jobId = uuidv4();
+const maxSizeInBytes = 20 * 1024 * 1024;
+let currentUploadedMemeCount;
+if (Astro.request.method === "POST") {
+    console.log(jobId);
+    const url = new URL(Astro.request.url);
+    jobId = url.searchParams.get("jobId");
+    const data = await Astro.request.formData();
+    const files = data.getAll("files") as File[];
+    const numOfFiles = files.length;
+
+    if (numOfFiles == 0) {
+        errorMessage = "no files provided";
+        // return Astro.redirect(
+        //     `/api/hx/file-upload-error?errorMessage=${errorMessage}`,
+        // );
+    }
+
+    // check if a job is already in progress
+    if (await checkIfAJobIsRunning()) {
+        errorMessage = "a job is already in progress";
+        // return Astro.redirect(
+        //     `/api/hx/file-upload-error?errorMessage=${errorMessage}`,
+        // );
+    }
+    for (let file of files) {
+        console.log(file.size);
+        if (file.size > maxSizeInBytes) {
+            console.log("FILE TOO BIG. SKIPPING");
+            errorMessage = "Collection contains files that are > 20MB";
+            // return Astro.redirect(
+            //     `/api/hx/file-upload-error?errorMessage=${errorMessage}`,
+            // );
+        }
+    }
+
+    if (!errorMessage) {
+        jobId = uuidv4();
+        console.log(jobId);
+        const session_id = Astro.cookies.get("sb-access-token").value;
+        let jwt_object = jwt_decode.jwtDecode(session_id);
+        console.log(jwt_object.username);
+
+        const jobObjectToDB = {
+            jobID: jobId,
+            fileName: "",
+            status: "in-progress",
+            message: "",
+            currentUploadedMemeCount: 0,
+            totalMemeCount: numOfFiles,
+            user: jwt_object.username,
+        };
+
+        const uploadMemeJobDBResult = await uploadJobToDB(jobObjectToDB);
+        console.log(uploadMemeJobDBResult);
+
+        let user_email = jwt_object.email;
+        console.log(user_email);
+
+        currentUploadedMemeCount = 0;
+        const tasks = files.map((file, index) => {
+            return limit(() =>
+                new Promise(async (resolve, reject) => {
+                    if (await checkIfAJobIsCanceled(jobId)) {
+                        return;
+                    }
+                    try {
+                        const result = processFile(
+                            file,
+                            index,
+                            files.length,
+                            jobId,
+                            user_email,
+                        ); // Assuming processFile is synchronous
+                        resolve(result); // Resolve the promise with the result of processFile
+                    } catch (error) {
+                        resolve(error);
+                        console.log(error); // Reject the promise if processFile throws an error
+                    }
+                })
+                    .then((result) => {
+                        // Now that processFile is treated as asynchronous, you can chain the next operation
+                        currentUploadedMemeCount++; // Adjust index if necessary
+                        updateJobCurrentUploadedMemeCount(
+                            jobId,
+                            currentUploadedMemeCount,
+                        );
+                    })
+                    .then((data) => {
+                        if (data) {
+                            console.log(
+                                `Updated current uploaded meme count for file ${index + 1}`,
+                            );
+                        }
+                    })
+                    .catch((error) => {
+                        console.error(
+                            `Error processing file ${index + 1}:`,
+                            error,
+                        );
+                    }),
+            );
+        });
+
+        // Wait for all the tasks to complete
+        Promise.all(tasks)
+            .then(() => {
+                console.log("All files have been processed.");
+            })
+            .catch((error) => {
+                console.error("An error occurred:", error);
+            });
+
+        console.log(jobId);
+    } else {
+        // Astro.response.status = 400;
+        console.log("error in the upload");
+        console.log(errorMessage);
+        // return new Response(errorMessage, { status: 400 });
+    }
+}
+---
+
+{
+    errorMessage ? (
+        <div
+            x-init={`
+                errorMessage = '${errorMessage}';
+                jobInProgress = false;
+                htmxTrigger = 'every 600ms'
+                console.log('jobInProgress', jobInProgress, 'errorMessage', errorMessage)
+            `}
+            style="display: none"
+        />
+    ) : (
+        <>
+            <div
+                x-init={`
+                showProgressBar = false;
+                jobInProgress = true;
+                htmxTrigger = 'every 600ms';
+                console.log('jobInProgress', jobInProgress, 'errorMessage', errorMessage);
+            `}
+                style="display: none"
+            />
+            <div
+                hx-trigger="done"
+                hx-get="/api/hx/file-upload-complete"
+                hx-target="#upload-result"
+                id="upload-status"
+                x-show="jobInProgress"
+            >
+                <div
+                    hx-get={`/api/hx/progress?jobId=${jobId}`}
+                    hx-target="this"
+                    hx-swap="innerHTML"
+                    hx-trigger="every 600ms"
+                    class="flex items-center"
+                    x-show="jobInProgress"
+                >
+                    <template
+                        x-if="!showProgressBar"
+                        id="loading"
+                        hx-swap-oob="true"
+                    >
+                        <span class="loading loading-spinner loading-lg" />
+                    </template>
+                </div>
+            </div>
+        </>
+    )
+}

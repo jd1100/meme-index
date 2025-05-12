@@ -1,0 +1,102 @@
+---
+// FileServer.astro
+import { readdir, stat, readFile } from 'node:fs/promises';
+import { join, extname, resolve, normalize } from 'node:path';
+
+const MEME_DIR = import.meta.env.LOCAL_MEME_DIRECTORY;
+
+console.log('MEME_DIR:', MEME_DIR);
+
+function getMimeType(fileName) {
+  const ext = extname(fileName).toLowerCase();
+  const mimeTypes = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm'
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+}
+
+if (Astro.request.method === 'GET') {
+  const params = new URL(Astro.request.url).searchParams;
+
+  // Handle file listing
+  if (params.get('list') === 'true') {
+    try {
+      const files = await readdir(MEME_DIR);
+      const memeFiles = await Promise.all(
+        files
+          .filter(file => /\.(jpg|jpeg|png|gif|webp|mp4|webm)$/i.test(file))
+          .map(async file => {
+            const filePath = join(MEME_DIR, file);
+            const stats = await stat(filePath);
+            return {
+              name: file,
+              size: stats.size,
+              mtime: stats.mtime.toISOString()
+            };
+          })
+      );
+      return new Response(JSON.stringify(memeFiles, null, 2), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error) {
+      console.error('Error reading meme directory:', error);
+      return new Response(`Error reading directory: ${error.message}`, { status: 500 });
+    }
+  }
+
+  // Handle file serving
+  const fileName = params.get('file');
+  console.log('Requested file:', fileName);
+
+  if (!fileName) {
+    return new Response('File name is required', { status: 400 });
+  }
+
+  // Normalize and resolve the file path
+  const normalizedFileName = normalize(decodeURIComponent(fileName));
+  const filePath = resolve(MEME_DIR, normalizedFileName);
+
+  console.log('Full file path:', filePath);
+
+  // Security check
+  if (!filePath.startsWith(MEME_DIR)) {
+    console.error('Access denied: File path outside of MEME_DIR');
+    return new Response('Access denied', { status: 403 });
+  }
+
+  try {
+    // Read file
+    const file = await readFile(filePath);
+    console.log('File read successfully, size:', file.length, 'bytes');
+
+    return new Response(file, {
+      status: 200,
+      headers: {
+        'Content-Type': getMimeType(fileName),
+        'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
+        'Content-Length': file.length.toString(),
+        'Access-Control-Allow-Origin': '*'  // Be careful with this in production
+      }
+    });
+  } catch (error) {
+    console.error('Error reading file:', error);
+    // Check if file exists but is not readable
+    try {
+      await stat(filePath);
+      return new Response(`File exists but is not readable: ${error.message}`, { status: 403 });
+    } catch {
+      return new Response(`File not found: ${error.message}`, { status: 404 });
+    }
+  }
+}
+
+// If we reach here, it's an unsupported request
+return new Response('Unsupported request', { status: 405 });
+---

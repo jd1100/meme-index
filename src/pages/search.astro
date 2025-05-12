@@ -1,0 +1,72 @@
+---
+// import Search from "../components/Search.astro";
+import * as Typesense from "typesense";
+// import "../layouts/global.css";
+const user = Astro.locals.user;
+// if (!user) {
+//   return new Response("fuk u", {
+//       status: 200,
+//     });
+// }
+
+let typesenseUrl = import.meta.env.TYPESENSE_NODE;
+let typesenseApiToken = import.meta.env.TYPESENSE_API_KEY;
+let typesensePort = import.meta.env.TYPESENSE_PORT;
+let typesenseProtocol = import.meta.env.TYPESENSE_PROTOCOL;
+
+
+let typesenseClient = new Typesense.Client({
+    nodes: [
+        {
+            host: typesenseUrl, // For Typesense Cloud use xxx.a1.typesense.net
+            port: typesensePort, // For Typesense Cloud use 443
+            protocol: typesenseProtocol, // For Typesense Cloud use https
+        },
+    ],
+    apiKey: typesenseApiToken,
+    connectionTimeoutSeconds: 2,
+});
+
+async function searchTypesense(searchQuery, page = 1, perPage = 20) {
+  console.log("search query: ", searchQuery)
+  let searchParameters = {
+    q: searchQuery,
+    num_typos: 4,
+    query_by: "imageAudioTranscribed,imageDescription",
+    per_page: perPage,
+    page: page,
+    sort_by: "_text_match:desc"
+    // // 'filter_by': 'user:' + user.username
+  };
+
+  // console.log(searchParameters);
+
+  const searchResults = await typesenseClient
+    .collections("memes")
+    .documents()
+    .search(searchParameters);
+  console.log(searchResults)
+  return searchResults  
+}
+
+if (Astro.request.method === "GET") {
+  const url = new URL(Astro.request.url);
+  const params = new URLSearchParams(url.search);
+  const searchQuery = params.get("q");
+  const page = parseInt(params.get("page") || "1");
+  const perPage = parseInt(params.get("perPage") || "20");
+
+  if (searchQuery) {
+    // console.log(searchQuery);
+    const searchResults = await searchTypesense(searchQuery, page, perPage);
+    searchResults.hits.forEach((hit, index) => {
+      const doc = hit.document;
+      console.log(index, doc.imageAudioTranscribed);
+      // Perform any other actions with each document
+    });
+    return new Response(JSON.stringify(searchResults.hits), {
+      status: 200,
+    });
+  }
+}
+---

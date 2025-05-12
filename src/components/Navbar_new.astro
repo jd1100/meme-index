@@ -1,0 +1,311 @@
+---
+import ProcessingProgress from "./ProcessingProgress.astro";
+const user = Astro.locals.user;
+// if (!user) {
+//     return Astro.redirect("/login");
+// }
+---
+
+<div class="flex flex-col">
+    <!-- Top navbar (always visible) -->
+    <nav class="navbar justify-between gap-4">
+        <!-- Logo -->
+        <a class="btn btn-ghost text-lg">
+            <img class="w-4" />
+            Meme Index
+        </a>
+
+        <!-- Search -->
+        <div
+            class="justify-center join w-full max-w-xl content hidden sm:inline-flex"
+        >
+            <!-- Search options -->
+            <!-- <select class="select select-sm select-bordered join-item">
+                <option selected>Good potions</option>
+                <option>Bad potions</option>
+                <option>Illegal potions</option>
+            </select> -->
+
+            <input
+                class="join-item input input-sm input-bordered w-full"
+                type="text"
+                id="searchInput"
+                autocomplete="off"
+                placeholder="Search"
+            />
+            <button
+                class="join-item btn btn-sm btn-primary text-success-content"
+                id="searchButton"
+            >
+                <i class="fa fa-search" aria-hidden="true" />
+            </button>
+        </div>
+        <ProcessingProgress />
+        <!-- Menu (Desktop) -->
+        <div class="shrink-0 hidden md:flex gap-2 items-center">
+            {
+                user ? (
+                    <a class="btn btn-sm btn-alert" href="/api/logout">
+                        Logout
+                        <i
+                            class="fa-solid fa-right-to-bracket"
+                            aria-hidden="true"
+                        />
+                    </a>
+                ) : (
+                    <a class="btn btn-sm btn btn-primary" href="/login/github">
+                        Log in with github
+                        <i
+                            class="fa-solid fa-right-to-bracket"
+                            aria-hidden="true"
+                        />
+                    </a>
+                )
+            }
+            <a class="btn btn-sm btn-primary" href="/upload">
+                Upload
+                <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
+            </a>
+        </div>
+
+        <!-- Menu (Mobile) -->
+        <div class="dropdown dropdown-end md:hidden">
+            <button class="btn btn-ghost" id="menuToggle">
+                <i class="fa-solid fa-bars text-lg"></i>
+            </button>
+
+            <ul
+                tabindex="0"
+                class="dropdown-content menu z-[1] bg-base-200 p-4 rounded-box shadow w-56 gap-2"
+                id="mobileMenu"
+            >
+                {
+                    user ? (
+                        <a class="btn btn-sm btn-alert" href="/api/logout">
+                            Logout
+                            <i
+                                class="fa-solid fa-right-to-bracket"
+                                aria-hidden="true"
+                            />
+                        </a>
+                    ) : (
+                        <a class="btn btn-sm btn-primary" href="/login/github">
+                            Log in with github
+                            <i
+                                class="fa-solid fa-right-to-bracket"
+                                aria-hidden="true"
+                            />
+                        </a>
+                    )
+                }
+                <a class="btn btn-sm btn-primary" href="/upload">
+                    Upload
+                    <i class="fa-solid fa-right-to-bracket" aria-hidden="true"
+                    ></i>
+                </a>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Bottom navbar (mobile only) -->
+    <nav class="navbar sm:hidden bg-base-200 border-neutral">
+        <!-- Search -->
+        <div class="join w-full">
+            <!-- Search options -->
+
+            <!-- Search input -->
+            <input
+                class="join-item input input-sm input-bordered w-full"
+                type="text"
+                id="searchInput"
+                autocomplete="off"
+                placeholder="Search"
+            />
+
+            <!-- Search button -->
+            <button
+                class="join-item btn btn-sm btn-primary text-success-content"
+                id="searchButton"
+            >
+                <i class="fa fa-search" aria-hidden="true"></i>
+            </button>
+        </div>
+    </nav>
+    <span
+        class="loading loading-infinity loading-lg"
+        id="loadingIcon"
+        style="visibility: hidden;"></span>
+    <div id="mosaic" class="grid grid-cols-2 md:grid-cols-4 gap-x-2">
+        <div id="column1" class="grid"></div>
+        <div id="column2" class="grid"></div>
+        <div id="column3" class="grid"></div>
+        <div id="column4" class="grid"></div>
+    </div>
+</div>
+<style>
+    @media (max-width: 640px) {
+        #mosaic {
+            grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+        }
+    }
+</style>
+<script>
+
+    const menuToggle = document.getElementById("menuToggle");
+    const mobileMenu = document.getElementById("mobileMenu");
+
+    menuToggle.addEventListener("click", (event) => {
+        event.stopPropagation(); // Prevent the click from immediately closing the menu
+        mobileMenu.classList.toggle("hidden");
+    });
+
+    // Close the menu when clicking outside
+    document.addEventListener("click", (event) => {
+        if (!mobileMenu.contains(event.target) && event.target !== menuToggle) {
+            mobileMenu.classList.add("hidden");
+        }
+    });
+
+    // Prevent clicks inside the menu from closing it
+    mobileMenu.addEventListener("click", (event) => {
+        event.stopPropagation();
+    });
+
+    const searchInput = document.getElementById("searchInput");
+    const button = document.getElementById("searchButton");
+    let currentPage = 1;
+    const perPage = 20;
+
+    async function loadMoreResults() {
+        currentPage++;
+        const query = searchInput.value;
+        const data = await performSearch(query, currentPage, perPage);
+        await displayResults(data, true);
+    }
+
+    const observer = new IntersectionObserver(
+        (entries) => {
+            if (entries[0].isIntersecting) {
+                loadMoreResults();
+            }
+        },
+        { threshold: 1 },
+    );
+
+    function observeLastElement() {
+        ["column1", "column2", "column3", "column4"]
+            .reverse()
+            .forEach((columnId) => {
+                const column = document.getElementById(columnId);
+                if (column.lastElementChild) {
+                    observer.observe(column.lastElementChild);
+                    return; // Stop after finding the first non-empty column from the end
+                }
+            });
+    }
+
+    searchInput.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") {
+            currentPage = 1;
+            document.getElementById("loadingIcon").style.visibility = "visible";
+            console.log(searchInput.nodeValue);
+            performSearch(searchInput.value).then((data) =>
+                displayResults(data),
+            );
+        }
+    });
+
+    button.addEventListener("click", () => {
+        currentPage = 1;
+        document.getElementById("loadingIcon").style.visibility = "visible";
+        console.log(searchInput.nodeValue);
+        performSearch(searchInput.value).then((data) => displayResults(data));
+    });
+
+    function pauseOtherVideos(current) {
+        const videos = document.querySelectorAll("video");
+        videos.forEach((video) => {
+            if (video !== current && !video.paused) {
+                video.pause();
+            }
+        });
+    }
+
+    async function performSearch(query, page = 1, perPage = 20) {
+        // if (!query) {
+        //     query = "*";
+        // }
+
+        const response = await fetch(
+            `/search?q=${encodeURIComponent(query)}&page=${page}&perPage=${perPage}`,
+        );
+        const data = await response.json();
+        return data;
+    }
+
+    async function displayResults(documents, append = false) {
+        if (!append) {
+            document.getElementById("column1").innerHTML = "";
+            document.getElementById("column2").innerHTML = "";
+            document.getElementById("column3").innerHTML = "";
+            document.getElementById("column4").innerHTML = ""; // Clear previous results
+        }
+
+        const loadMedia = (doc) =>
+            new Promise((resolve, reject) => {
+                const mediaContainer = document.createElement("div");
+                mediaContainer.className = "mb-4 break-inside-avoid";
+
+                let mediaElement;
+                const url = `/fileServer?file=${doc.document.imagePath.split(/[\\/]/).pop()}`;// Adjust according to your actual data structure
+                const extension = doc.document.fileName
+                    .split(".")
+                    .pop()
+                    .toLowerCase();
+
+                if (["jpg", "jpeg", "png", "gif", "webp"].includes(extension)) {
+                    mediaElement = new Image();
+                    mediaElement.onload = () => resolve(mediaContainer);
+                    mediaElement.onerror = () =>
+                        reject(new Error("Image failed to load"));
+                    mediaElement.src = url;
+                } else if (["mp4", "webm", "ogg", "mkv"].includes(extension)) {
+                    mediaElement = document.createElement("video");
+                    mediaElement.controls = true;
+                    mediaElement.preload = "metadata";
+                    mediaElement.onloadedmetadata = () =>
+                        resolve(mediaContainer);
+                    mediaElement.onerror = () =>
+                        reject(new Error("Video failed to load"));
+                    mediaElement.src = url;
+                    mediaElement.addEventListener("play", () =>
+                        pauseOtherVideos(mediaElement),
+                    );
+                } else {
+                    reject(new Error("Unsupported media type"));
+                    return;
+                }
+
+                mediaElement.className =
+                    "w-full h-full object-cover rounded-lg overflow-hidden";
+                mediaContainer.appendChild(mediaElement);
+            });
+
+        try {
+            const mediaElements = await Promise.all(
+                documents.map((doc) => loadMedia(doc)),
+            );
+            mediaElements.forEach((element, index) => {
+                const columnIndex = (index % 4) + 1; // Determine the column (1 to 4)
+                document
+                    .getElementById(`column${columnIndex}`)
+                    .appendChild(element);
+            });
+            observeLastElement();
+        } catch (error) {
+            console.error("An error occurred while loading media:", error);
+        } finally {
+            document.getElementById("loadingIcon").style.visibility = "hidden";
+        }
+    }
+</script>
